@@ -1,0 +1,55 @@
+name: Build Static Tesseract
+
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Restore/Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: 'master' # 或者指定具体的 commit hash 以保证稳定性
+          
+      - name: Install Dependencies (Static)
+        # x64-linux-static 确保所有库都是静态编译的
+        run: |
+          $VCPKG_ROOT/vcpkg install leptonica tesseract --triplet x64-linux-static
+          
+      - name: Checkout Tesseract Source
+        uses: actions/checkout@v3
+        with:
+          repository: tesseract-ocr/tesseract
+          path: tesseract-src
+          ref: 5.3.4 # 建议锁定版本
+
+      - name: Configure CMake
+        run: |
+          cmake -S tesseract-src -B build \
+            -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
+            -DVCPKG_TARGET_TRIPLET=x64-linux-static \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DINSTALL_TAGS=OFF \
+            -DBUILD_TRAINING_TOOLS=OFF
+
+      - name: Build Tesseract
+        run: cmake --build build --config Release --parallel
+
+      - name: Verify Static Linking
+        run: |
+          # 检查是否为静态链接 (不应包含 .so 依赖，libc 除外)
+          ldd build/tesseract || echo "Not a dynamic executable"
+          file build/tesseract
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tesseract-static-linux
+          path: build/tesseract
