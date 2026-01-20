@@ -9,51 +9,61 @@ jobs:
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
 
     steps:
-      # 1️⃣ Checkout 当前仓库（可选，如果需要）
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      # 3️⃣ Setup vcpkg （build bootstrap）
       - name: Restore/Setup vcpkg
         uses: lukka/run-vcpkg@v11
         with:
           vcpkgGitCommitId: '7c11b72a6f810293d0ce234de126b99e9ab6fa7a'
 
-      # 4️⃣ Install dependencies as static libraries
+      # 关键步骤：定义 vcpkg 缺失的 x64-linux-static 配置
+      - name: Create Custom Static Triplet
+        run: |
+          mkdir -p ${{ github.workspace }}/custom-triplets
+          cat <<EOF > ${{ github.workspace }}/custom-triplets/x64-linux-static.cmake
+          set(VCPKG_TARGET_ARCHITECTURE x64)
+          set(VCPKG_CRT_LINKAGE static)
+          set(VCPKG_LIBRARY_LINKAGE static)
+          set(VCPKG_CMAKE_SYSTEM_NAME Linux)
+          EOF
+
       - name: Install Dependencies (Static)
         run: |
-          $VCPKG_ROOT/vcpkg install leptonica tesseract:x64-linux-static
+          # 使用 --overlay-triplets 告知 vcpkg 去哪里找自定义配置
+          $VCPKG_ROOT/vcpkg install leptonica tesseract \
+            --overlay-triplets=${{ github.workspace }}/custom-triplets \
+            --triplet x64-linux-static
 
-      # 5️⃣ Checkout Tesseract source code
       - name: Checkout Tesseract Source
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           repository: tesseract-ocr/tesseract
           path: tesseract-src
-          ref: 5.3.4  # 锁定版本
+          ref: 5.3.4
 
-      # 6️⃣ Configure CMake
       - name: Configure CMake
         run: |
+          # 同样需要告诉 CMake 自定义 Triplet 的路径
           cmake -S tesseract-src -B build \
             -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
+            -DVCPKG_OVERLAY_TRIPLETS=${{ github.workspace }}/custom-triplets \
             -DVCPKG_TARGET_TRIPLET=x64-linux-static \
             -DBUILD_SHARED_LIBS=OFF \
             -DCMAKE_BUILD_TYPE=Release \
-            -DINSTALL_TAGS=OFF \
-            -DBUILD_TRAINING_TOOLS=OFF
+            -DBUILD_TRAINING_TOOLS=OFF \
+            -DSTATIC=ON
 
-      # 7️⃣ Build Tesseract
       - name: Build Tesseract
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config Release --parallel $(nproc)
 
-      # 8️⃣ Verify static linking
       - name: Verify Static Linking
         run: |
-          ldd build/tesseract || echo "Not a dynamic executable"
+          ls -lh build/tesseract
           file build/tesseract
+          # 检查是否还有动态链接库依赖
+          ldd build/tesseract || echo "Confirmed: No dynamic dependencies or static binary"
 
-      # 9️⃣ Upload artifact
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
