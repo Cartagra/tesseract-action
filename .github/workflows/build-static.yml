@@ -1,39 +1,69 @@
-name: Build Static Tesseract (Alpine)
+name: Build Static Tesseract
 
-on: workflow_dispatch
+on: [push, workflow_dispatch]
 
 jobs:
-  build-alpine:
+  build:
     runs-on: ubuntu-latest
-    container: alpine:latest
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+
     steps:
-      - name: Install Build Tools
-        run: apk add --no-cache build-base cmake git samurai autoconf automake libtool pkgconf
+      # 1️⃣ Checkout 当前仓库（可选，如果需要）
+      - name: Checkout Code
+        uses: actions/checkout@v3
 
-      - name: Install Dependencies (Static Dev Libraries)
-        # Alpine 的 -dev 包通常包含静态库，但需仔细配置
-        run: apk add --no-cache leptonica-dev libpng-dev libjpeg-turbo-dev tiff-dev zlib-dev
-
-      - name: Clone Tesseract
-        run: git clone --depth 1 https://github.com/tesseract-ocr/tesseract.git
-
-      - name: Build
+      # 2️⃣ Clone vcpkg 并 checkout 固定 commit
+      - name: Clone vcpkg
         run: |
-          cd tesseract
-          mkdir build && cd build
-          # LDFLAGS="-static" 是关键，强制全静态链接
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_EXE_LINKER_FLAGS="-static"
-          make -j$(nproc)
+          git clone https://github.com/microsoft/vcpkg.git $VCPKG_ROOT
+          cd $VCPKG_ROOT
+          # 使用 vcpkg 官方最新稳定 commit（示例）
+          git checkout 7c11b72a6f810293d0ce234de126b99e9ab6fa7a
+          
+      # 3️⃣ Setup vcpkg （build bootstrap）
+      - name: Restore/Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: ${{ github.workspace }}/vcpkg
 
-      - name: Verify
+      # 4️⃣ Install dependencies as static libraries
+      - name: Install Dependencies (Static)
         run: |
-          cd tesseract/build
-          ls -lh tesseract
-          # 如果输出包含 "statically linked"，则成功
-          file tesseract
+          $VCPKG_ROOT/vcpkg install leptonica tesseract --triplet x64-linux-static
 
+      # 5️⃣ Checkout Tesseract source code
+      - name: Checkout Tesseract Source
+        uses: actions/checkout@v3
+        with:
+          repository: tesseract-ocr/tesseract
+          path: tesseract-src
+          ref: 5.3.4  # 锁定版本
+
+      # 6️⃣ Configure CMake
+      - name: Configure CMake
+        run: |
+          cmake -S tesseract-src -B build \
+            -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
+            -DVCPKG_TARGET_TRIPLET=x64-linux-static \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DINSTALL_TAGS=OFF \
+            -DBUILD_TRAINING_TOOLS=OFF
+
+      # 7️⃣ Build Tesseract
+      - name: Build Tesseract
+        run: cmake --build build --config Release --parallel
+
+      # 8️⃣ Verify static linking
+      - name: Verify Static Linking
+        run: |
+          ldd build/tesseract || echo "Not a dynamic executable"
+          file build/tesseract
+
+      # 9️⃣ Upload artifact
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tesseract-alpine-static
-          path: tesseract/build/tesseract
+          name: tesseract-static-linux
+          path: build/tesseract
