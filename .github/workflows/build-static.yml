@@ -22,7 +22,7 @@ jobs:
       # 4️⃣ Install dependencies as static libraries
       - name: Install Dependencies (Static)
         run: |
-          $VCPKG_ROOT/vcpkg install leptonica tesseract --triplet x64-linux-static
+          $VCPKG_ROOT/vcpkg install leptonica tesseract:x64-linux-static
 
       # 5️⃣ Checkout Tesseract source code
       - name: Checkout Tesseract Source
