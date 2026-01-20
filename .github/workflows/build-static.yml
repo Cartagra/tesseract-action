@@ -1,55 +1,39 @@
-name: Build Static Tesseract
+name: Build Static Tesseract (Alpine)
 
-on: [push, workflow_dispatch]
+on: workflow_dispatch
 
 jobs:
-  build:
+  build-alpine:
     runs-on: ubuntu-latest
-    env:
-      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
-
+    container: alpine:latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
+      - name: Install Build Tools
+        run: apk add --no-cache build-base cmake git samurai autoconf automake libtool pkgconf
 
-      - name: Restore/Setup vcpkg
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: 'master' # 或者指定具体的 commit hash 以保证稳定性
-          
-      - name: Install Dependencies (Static)
-        # x64-linux-static 确保所有库都是静态编译的
+      - name: Install Dependencies (Static Dev Libraries)
+        # Alpine 的 -dev 包通常包含静态库，但需仔细配置
+        run: apk add --no-cache leptonica-dev libpng-dev libjpeg-turbo-dev tiff-dev zlib-dev
+
+      - name: Clone Tesseract
+        run: git clone --depth 1 https://github.com/tesseract-ocr/tesseract.git
+
+      - name: Build
         run: |
-          $VCPKG_ROOT/vcpkg install leptonica tesseract --triplet x64-linux-static
-          
-      - name: Checkout Tesseract Source
-        uses: actions/checkout@v3
-        with:
-          repository: tesseract-ocr/tesseract
-          path: tesseract-src
-          ref: 5.3.4 # 建议锁定版本
+          cd tesseract
+          mkdir build && cd build
+          # LDFLAGS="-static" 是关键，强制全静态链接
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_EXE_LINKER_FLAGS="-static"
+          make -j$(nproc)
 
-      - name: Configure CMake
+      - name: Verify
         run: |
-          cmake -S tesseract-src -B build \
-            -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
-            -DVCPKG_TARGET_TRIPLET=x64-linux-static \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DINSTALL_TAGS=OFF \
-            -DBUILD_TRAINING_TOOLS=OFF
-
-      - name: Build Tesseract
-        run: cmake --build build --config Release --parallel
-
-      - name: Verify Static Linking
-        run: |
-          # 检查是否为静态链接 (不应包含 .so 依赖，libc 除外)
-          ldd build/tesseract || echo "Not a dynamic executable"
-          file build/tesseract
+          cd tesseract/build
+          ls -lh tesseract
+          # 如果输出包含 "statically linked"，则成功
+          file tesseract
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tesseract-static-linux
-          path: build/tesseract
+          name: tesseract-alpine-static
+          path: tesseract/build/tesseract
