@@ -28,7 +28,7 @@ jobs:
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
         with:
-          vcpkgGitCommitId: '8f76037b52479e0009623e11f753df90f6797b10'
+          vcpkgGitCommitId: '7c11b72a6f810293d0ce234de126b99e9ab6fa7a'
 
       # 3. 创建强制全静态链接的自定义 Triplet
       - name: Create Custom Static Triplet
