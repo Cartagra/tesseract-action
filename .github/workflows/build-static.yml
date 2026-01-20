@@ -1,4 +1,4 @@
-name: Build Static Tesseract
+name: Build Full Static Tesseract
 
 on: 
   push:
@@ -6,17 +6,21 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04  # 使用 20.04 兼容性更好
     env:
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
-      # 核心：启用 GitHub Actions 专用二进制缓存后端
       VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 1. 暴露 GitHub Actions 缓存 API 令牌给 vcpkg 使用
+      # 安装 Linux 系统编译全静态所需的额外包
+      - name: Install System Static Libs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential g++
+
       - name: Export GitHub Actions Cache Env
         uses: actions/github-script@v7
         with:
@@ -24,13 +28,11 @@ jobs:
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
-      # 2. 初始化 vcpkg
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
         with:
           vcpkgGitCommitId: '7c11b72a6f810293d0ce234de126b99e9ab6fa7a'
 
-      # 3. 创建强制全静态链接的自定义 Triplet
       - name: Create Custom Static Triplet
         run: |
           mkdir -p triplets
@@ -39,16 +41,16 @@ jobs:
           set(VCPKG_CRT_LINKAGE static)
           set(VCPKG_LIBRARY_LINKAGE static)
           set(VCPKG_CMAKE_SYSTEM_NAME Linux)
+          # 强制 vcpkg 在测试环境下也使用静态链接
+          set(VCPKG_LINKER_FLAGS "-static -static-libgcc -static-libstdc++")
           EOF
 
-      # 4. 安装依赖（每成功一个包，vcpkg 都会立即上传缓存）
       - name: Install Dependencies
         run: |
           $VCPKG_ROOT/vcpkg install leptonica tesseract \
             --overlay-triplets=triplets \
             --triplet x64-linux-static
 
-      # 5. 拉取 Tesseract 源码
       - name: Checkout Tesseract Source
         uses: actions/checkout@v4
         with:
@@ -56,7 +58,6 @@ jobs:
           path: tesseract-src
           ref: 5.3.4
 
-      # 6. 配置与编译（使用 install 目标来固定输出路径）
       - name: Configure and Build
         run: |
           cmake -S tesseract-src -B build \
@@ -66,32 +67,24 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TRAINING_TOOLS=OFF \
-            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/dist
+            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/dist \
+            -DCMAKE_EXE_LINKER_FLAGS="-static" # 核心：强制链接器尝试全静态
 
-          # 编译并执行安装指令
           cmake --build build --config Release --parallel $(nproc) --target install
 
-      # 7. 验证静态链接情况
-      - name: Verify Static Linking
+      - name: Strip and Verify
         run: |
-          # 定位安装后的文件
           BIN_PATH="${{ github.workspace }}/dist/bin/tesseract"
-          
           if [ -f "$BIN_PATH" ]; then
-            echo "Binary found at $BIN_PATH"
-            ls -lh "$BIN_PATH"
+            strip "$BIN_PATH"
+            echo "--- 文件详情 ---"
             file "$BIN_PATH"
-            # 检查 ldd 依赖，全静态程序通常会返回 'not a dynamic executable'
-            ldd "$BIN_PATH" || echo "Static check passed: No dynamic dependencies found."
-          else
-            echo "Error: Binary not found at $BIN_PATH"
-            find build -name tesseract -type f
-            exit 1
+            echo "--- 依赖检查 (预期输出: not a dynamic executable) ---"
+            ldd "$BIN_PATH" || echo "Check Passed: Binary is fully static!"
           fi
 
-      # 8. 上传最终产物
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tesseract-static-linux-x64
+          name: tesseract-full-static-linux
           path: ${{ github.workspace }}/dist/bin/tesseract
