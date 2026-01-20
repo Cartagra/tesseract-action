@@ -13,19 +13,11 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v3
 
-      # 2️⃣ Clone vcpkg 并 checkout 固定 commit
-      - name: Clone vcpkg
-        run: |
-          git clone https://github.com/microsoft/vcpkg.git $VCPKG_ROOT
-          cd $VCPKG_ROOT
-          # 使用 vcpkg 官方最新稳定 commit（示例）
-          git checkout 7c11b72a6f810293d0ce234de126b99e9ab6fa7a
-          
       # 3️⃣ Setup vcpkg （build bootstrap）
       - name: Restore/Setup vcpkg
         uses: lukka/run-vcpkg@v11
         with:
-          vcpkgDirectory: ${{ github.workspace }}/vcpkg
+          vcpkgGitCommitId: '7c11b72a6f810293d0ce234de126b99e9ab6fa7a'
 
       # 4️⃣ Install dependencies as static libraries
       - name: Install Dependencies (Static)
